@@ -1,0 +1,79 @@
+  
+name: makepkg CI
+
+on: 
+  release:
+    types: [published]
+  push:
+    tags:
+    - 'v*'
+   # branches: 
+   # - master
+  schedule:
+    - cron: 00 15 * * *
+  watch:
+    types: [started]
+
+jobs:
+  build-package:
+    strategy:
+      matrix:
+        arch: ["armv7", "aarch64", "x86_64"]
+    runs-on: ubuntu-latest
+    name: Build on ${{ matrix.arch }}
+    if: github.event.repository.owner.id == github.event.sender.id
+    env:
+      UPSTREAM_URL: ${{ secrets.UPSTREAM_URL }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+      with:
+        fetch-depth: 0
+    - name: Pull upstream changes
+      uses: atomlong/Sync-With-Upstream-action@master
+      id: sync
+      if: ${{ env.UPSTREAM_URL != '' }}
+      with:
+        upstream_repository: ${{ env.UPSTREAM_URL }}
+        upstream_branch: master
+        target_branch: master
+        git_pull_args: --rebase
+        git_push_args: --force-with-lease
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+    - name: Run on Archlinux
+      uses: atomlong/run-on-arch-action@alarm
+      id: runcmd
+      if: steps.sync.outputs.has_new_commits != 'false'
+      with:
+        arch: ${{ matrix.arch }}
+        githubToken: ${{ github.token }}
+        rcloneConfig: ${{ secrets.RCLONE_CONF }}
+        pgpKey: ${{ secrets.PGP_KEY }}
+        pgpKeyPassword: ${{ secrets.PGP_KEY_PASSWD }}
+        pacmanRepo: ${{ secrets.PACMAN_REPO }}
+        deployPath: ${{ secrets.DEPLOY_PATH }}
+        customRepos: ${{ secrets.CUSTOM_REPOS }}
+    - name: Send build result via mail
+      uses: atomlong/send-mail-action@v3.1.0
+      if: ${{ steps.runcmd.outputs.message != '' }}
+      with:
+        server_address: ${{secrets.MAIL_HOST}}
+        server_port: ${{secrets.MAIL_PORT}}
+        username: ${{secrets.MAIL_USERNAME}}
+        password: ${{secrets.MAIL_PASSWORD}}
+        subject: Github Actions job of ${{github.repository}} result
+        html_body: ${{ steps.runcmd.outputs.message }}
+        to: ${{secrets.MAIL_TO}}
+        from: Github
+    - name: Send sync result via mail
+      uses: atomlong/send-mail-action@v3.1.0
+      if: ${{ steps.sync.outputs.error_message != '' && matrix.arch == 'armv7' }}
+      with:
+        server_address: ${{secrets.MAIL_HOST}}
+        server_port: ${{secrets.MAIL_PORT}}
+        username: ${{secrets.MAIL_USERNAME}}
+        password: ${{secrets.MAIL_PASSWORD}}
+        subject: Github Actions job of ${{github.repository}} result
+        html_body: ${{ steps.sync.outputs.error_message }}
+        to: ${{secrets.MAIL_TO}}
+        from: Github
